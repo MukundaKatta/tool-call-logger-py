@@ -1,8 +1,9 @@
 """Tests for tool-call-logger-py."""
+
 import io
 import json
 import pytest
-from tool_call_logger import ToolCallLogger, ToolCallEntry
+from tool_call_logger import ToolCallLogger
 
 
 def test_log_call_records_entry():
@@ -115,13 +116,52 @@ def test_wrap_decorator_logs_error():
     assert "ValueError" in logger.errors()[0].error
 
 
+def test_wrap_decorator_supports_positional_args():
+    logger = ToolCallLogger()
+
+    @logger.wrap("greet")
+    def greet(name):
+        return f"Hello, {name}!"
+
+    result = greet("World")
+    assert result == "Hello, World!"
+    assert logger.call_count("greet") == 1
+    # positional arg is bound to its parameter name
+    assert logger.calls()[0].args == {"name": "World"}
+    assert logger.results()[0].result == "Hello, World!"
+
+
+def test_wrap_decorator_mixes_positional_and_keyword():
+    logger = ToolCallLogger()
+
+    @logger.wrap("add")
+    def add(a, b):
+        return a + b
+
+    assert add(1, b=2) == 3
+    assert logger.calls()[0].args == {"a": 1, "b": 2}
+
+
+def test_close_does_not_close_borrowed_stream():
+    buf = io.StringIO()
+    logger = ToolCallLogger(buf)
+    logger.log_call("t", {"x": 1})
+    logger.close()
+    # we do not own the stream, so it stays open ...
+    assert not buf.closed
+    # ... but the logger stops writing to it
+    logger.log_call("t", {"x": 2})
+    buf.seek(0)
+    assert len(buf.readlines()) == 1
+
+
 def test_jsonl_output_to_stream():
     buf = io.StringIO()
     logger = ToolCallLogger(buf)
     start = logger.log_call("t", {"x": 1})
     logger.log_result("t", {"x": 1}, "res", start)
     buf.seek(0)
-    lines = [json.loads(l) for l in buf.readlines()]
+    lines = [json.loads(line) for line in buf.readlines()]
     assert len(lines) == 2
     assert lines[0]["kind"] == "call"
     assert lines[1]["kind"] == "result"
